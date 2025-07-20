@@ -1,41 +1,55 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
-import pytesseract
+import easyocr
 import io
 import re
-
-# If you're on Windows and Tesseract is not in PATH, uncomment and set path:
-# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+import numpy as np
 
 app = FastAPI()
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+YOUR_EMAIL = "yourmail"
+
+reader = easyocr.Reader(['en'], gpu=False)
+
 @app.post("/captcha")
-async def solve_captcha(image: UploadFile = File(...)):
+async def solve_captcha(file: UploadFile = File(...)):
     try:
-        # Step 1: Read image bytes
-        image_bytes = await image.read()
-        image = Image.open(io.BytesIO(image_bytes))
+        contents = await file.read()
+        image_bytes = io.BytesIO(contents)
+        image = Image.open(image_bytes).convert("RGB")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image file")
 
-        # Step 2: OCR with pytesseract
-        text = pytesseract.image_to_string(image)
+    try:
+        result = reader.readtext(np.array(image), detail=0)
+        full_text = " ".join(result)
+        print("OCR Text:", full_text)
+    except Exception:
+        raise HTTPException(status_code=500, detail="OCR failed")
 
-        # Step 3: Extract two 8-digit numbers using regex
-        # Remove spaces and find two 8-digit numbers with optional symbols between
-        clean_text = text.replace(" ", "")
-        match = re.findall(r"(\d{8})\D+(\d{8})", clean_text)
+    numbers = re.findall(r'\d{8}', full_text)
+    if len(numbers) < 2:
+        raise HTTPException(status_code=400, detail="Not enough 8-digit numbers found")
 
-        if not match:
-            return JSONResponse({"error": "Could not parse two 8-digit numbers."}, status_code=400)
+    try:
+        num1, num2 = int(numbers[0]), int(numbers[1])
+        product = num1 * num2
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to compute product")
 
-        a, b = match[0]
-        result = int(a) * int(b)
+    return JSONResponse(content={"answer": product, "email": "23f2001985@ds.study.iitm.ac.in"})
 
-        # Step 4: Return result
-        return {
-            "answer": result,
-            "email": "23f2001985@ds.study.iitm.ac.in"
-        }
-
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("2_captcha:app", host="0.0.0.0", port=8002, reload=True)
